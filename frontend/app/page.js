@@ -27,13 +27,13 @@ export default function Home() {
   const [loading, setLoading] = useState(true);
   const graphRef = useRef(null);
 
-  // Define which classifications count as threats
   const threatClassifications = [
-    'Memory Error',
-    'Authentication Error',
-    'File System Error',
-    'Network Error',
-    'Permission Error',
+    'system_critical',
+    'authentication_error',
+    'file_error',
+    'network_error',
+    'permission_error',
+    'memory error'
   ];
 
   useEffect(() => {
@@ -42,10 +42,9 @@ export default function Home() {
         const logsResponse = await fetch('http://localhost:5000/api/logs');
         const logsData = await logsResponse.json();
         setLogs(logsData);
-
-        // Filter threats from logs
-        const threatsData = logsData.filter(log => threatClassifications.includes(log.classification));
-        setThreats(threatsData);
+        setThreats(logsData.filter(log =>
+          threatClassifications.includes(log.anomaly_type)
+        ));
       } catch (error) {
         console.error('Error fetching data:', error);
       } finally {
@@ -58,10 +57,9 @@ export default function Home() {
     const socket = io('http://localhost:5000');
     socket.on('new_log', (data) => {
       setLogs(prev => [data, ...prev]);
-
-      if (threatClassifications.includes(data.classification)) {
+      if (threatClassifications.includes(data.anomaly_type)) {
         setThreats(prev => [data, ...prev]);
-        toast.error(`New Threat Detected: ${data.log}`, {
+        toast.error(`New Threat: ${data.log?.content || data.content}`, {
           position: "top-right",
           theme: "dark",
           autoClose: 5000,
@@ -73,9 +71,18 @@ export default function Home() {
     return () => socket.disconnect();
   }, []);
 
-  // Pie chart data
+  const formatTimestamp = (raw) => {
+    if (!raw) return 'No timestamp';
+    if (raw.length < 10) {
+      const today = new Date();
+      return `${today.toLocaleDateString()} ${raw}`;
+    }
+    return new Date(raw).toLocaleString();
+  };
+
   const threatCount = threats.length;
   const nonThreatCount = logs.length - threatCount;
+
   const pieData = {
     labels: [
       `Threats (${((threatCount / (logs.length || 1)) * 100).toFixed(1)}%)`,
@@ -88,11 +95,12 @@ export default function Home() {
     }]
   };
 
-  // Line chart data
   const recentLogs = logs.slice(0, 10).reverse();
   let cumulative = 0;
   const lineData = {
-    labels: recentLogs.map(log => new Date(log.timestamp).toLocaleTimeString()),
+    labels: recentLogs.map(log =>
+      formatTimestamp(log.timestamp)
+    ),
     datasets: [
       {
         label: 'Logs',
@@ -103,7 +111,9 @@ export default function Home() {
       },
       {
         label: 'Threats',
-        data: recentLogs.map(log => (threatClassifications.includes(log.classification) ? 1 : 0)),
+        data: recentLogs.map(log =>
+          threatClassifications.includes(log.anomaly_type) ? 1 : 0
+        ),
         borderColor: '#ff4d4d',
         backgroundColor: '#ff4d4d33',
         tension: 0.3,
@@ -111,7 +121,7 @@ export default function Home() {
       {
         label: 'Cumulative Threats',
         data: recentLogs.map(log => {
-          if (threatClassifications.includes(log.classification)) cumulative++;
+          if (threatClassifications.includes(log.anomaly_type)) cumulative++;
           return cumulative;
         }),
         borderColor: '#ff0000',
@@ -133,7 +143,6 @@ export default function Home() {
 
       <main className="p-4 sm:p-8 max-w-7xl mx-auto">
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
-          {/* Logs Section */}
           <section className="p-3 sm:p-4 border border-gray-700 rounded bg-[#2c3e50] shadow-lg col-span-1 lg:col-span-2 max-h-[350px] sm:max-h-[400px] overflow-auto">
             <div className="flex items-center justify-between mb-3 sm:mb-4">
               <h2 className="text-lg sm:text-xl text-[#00ff9d]">Recent Logs</h2>
@@ -152,31 +161,33 @@ export default function Home() {
             ) : (
               <ul className="space-y-3">
                 {logs.slice(0, 5).map((log, idx) => {
-                  const isThreat = threatClassifications.includes(log.classification);
+                  const isThreat = threatClassifications.includes(log.anomaly_type);
+                  console.log(log.anomaly_type);
+                  
                   return (
                     <li
-                      key={idx}
+                      key={log._id || idx}
                       className={`p-3 rounded border ${isThreat
-                          ? 'border-red-600 bg-red-900/20 text-red-100'
-                          : 'border-gray-600 bg-[#1a1f2c] text-gray-300'
+                        ? 'border-red-600 bg-red-900/20 text-red-100'
+                        : 'border-gray-600 bg-[#1a1f2c] text-gray-300'
                         }`}
                     >
-                      <p className="text-sm  font-semibold">{log.log}</p>
-                      <p className="text-xs  italic">
-                        Classification: <span className="font-medium text-xs text-gray-600">{log.classification || "Normal"}</span>
+                      <p className="text-sm font-semibold">{log.log?.content || log.content || "No content"}</p>
+                      <p className="text-xs italic">
+                        Type: <span className="font-medium">{log.anomaly_type || "normal"}</span> |
+                        Severity: <span className="text-yellow-400">{log.severity || "N/A"}</span> |
+                        Confidence: <span className="text-blue-300">
+                          {log.confidence != null ? `${(log.confidence * 100).toFixed(1)}%` : 'N/A'}
+                        </span>
                       </p>
-                      <span className="text-xs text-gray-500">
-                        {new Date(log.timestamp).toLocaleString()}
-                      </span>
+                      <span className="text-xs text-gray-500">{formatTimestamp(log.timestamp)}</span>
                     </li>
                   );
                 })}
               </ul>
-
             )}
           </section>
 
-          {/* Pie Chart Section */}
           <section className="p-3 sm:p-4 border border-gray-700 rounded bg-[#2c3e50] shadow-lg flex flex-col items-center justify-center h-[300px] sm:h-[400px]">
             <h2 className="text-lg sm:text-xl mt-2 mb-2 text-[#00ff9d]">Threat Summary</h2>
             <div className="w-full max-w-[250px] sm:max-w-none">
@@ -186,9 +197,6 @@ export default function Home() {
                 plugins: {
                   legend: {
                     position: 'bottom',
-                    labels: {
-                      
-                    }
                   }
                 }
               }} />
@@ -199,34 +207,26 @@ export default function Home() {
           </section>
         </div>
 
-        {/* Line Chart Section */}
         <section ref={graphRef} className="mt-6 sm:mt-8 p-3 sm:p-4 border border-gray-700 rounded bg-[#2c3e50] shadow-lg max-w-4xl mx-auto">
           <h2 className="text-lg sm:text-xl mb-3 sm:mb-4 text-[#00ff9d]">Logs & Threats Over Time</h2>
           <div className="w-full">
-            <Line data={lineData} options={{
-              maintainAspectRatio: true,
-              responsive: true,
-              scales: {
-                x: {
-                  ticks: {
-                    
-                  }
+            {recentLogs.length > 0 ? (
+              <Line data={lineData} options={{
+                maintainAspectRatio: true,
+                responsive: true,
+                scales: {
+                  x: { ticks: {} },
+                  y: { ticks: {} }
                 },
-                y: {
-                  ticks: {
-                    
+                plugins: {
+                  legend: {
+                    position: 'bottom',
                   }
                 }
-              },
-              plugins: {
-                legend: {
-                  position: 'bottom',
-                  labels: {
-                    
-                  }
-                }
-              }
-            }} />
+              }} />
+            ) : (
+              <p className="text-center text-gray-400">No logs to visualize.</p>
+            )}
           </div>
         </section>
       </main>

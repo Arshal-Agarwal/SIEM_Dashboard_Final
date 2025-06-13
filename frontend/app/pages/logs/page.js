@@ -1,22 +1,25 @@
 "use client";
 import { useState, useEffect } from "react";
 import Navbar from "@/app/components/navbar";
-import { io } from 'socket.io-client';
+import { io } from "socket.io-client";
 import { toast, ToastContainer } from "react-toastify";
-import { Pie } from 'react-chartjs-2';
+import { Pie } from "react-chartjs-2";
 import {
   Chart as ChartJS,
   ArcElement,
   Tooltip,
   Legend,
-} from 'chart.js';
+} from "chart.js";
+import "react-toastify/dist/ReactToastify.css";
 
+// Define valid threat types
 const threatClassifications = [
-  'Memory Error',
-  'Authentication Error',
-  'File System Error',
-  'Network Error',
-  'Permission Error',
+  "system_critical",
+  "memory_error",
+  "authentication_error",
+  "filesystem_error",
+  "network_error",
+  "permission_error",
 ];
 
 ChartJS.register(ArcElement, Tooltip, Legend);
@@ -26,26 +29,29 @@ export default function Home() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const fetchData = async () => {
+    const fetchLogs = async () => {
       try {
-        const logsResponse = await fetch('http://localhost:5000/api/logs');
-        const logsData = await logsResponse.json();
-        setLogs(logsData);
+        const res = await fetch("http://localhost:5000/api/logs");
+        const data = await res.json();
+        setLogs(data);
+        console.log(data);
       } catch (error) {
-        console.error('Error fetching data:', error);
+        console.error("Failed to fetch logs:", error);
       } finally {
         setLoading(false);
       }
+      console.log(logs);
+      
     };
 
-    fetchData();
+    fetchLogs();
 
-    const socket = io('http://localhost:5000');
+    const socket = io("http://localhost:5000");
+    socket.on("new_log", (log) => {
+      setLogs((prev) => [log, ...prev]);
 
-    socket.on('new_log', (data) => {
-      setLogs(prev => [data, ...prev]);
-      if (data.classification === 'threat') {
-        toast.error(`New Threat Detected: ${data.log}`, {
+      if (threatClassifications.includes(log.anomaly_type)) {
+        toast.error(`⚠️ Threat: ${log.log.content}`, {
           position: "top-right",
           theme: "dark",
           autoClose: 5000,
@@ -57,106 +63,106 @@ export default function Home() {
     return () => socket.disconnect();
   }, []);
 
-  const formatTimestamp = (timestamp) => {
-    if (!timestamp) return 'No timestamp';
-    const date = new Date(timestamp);
-    return isNaN(date.getTime()) ? 'Invalid date' : date.toLocaleString();
+  const formatTimestamp = (ts) => {
+    if (!ts || ts.length <= 8) return ts; // e.g. "04:02:55"
+    const date = new Date(ts);
+    return isNaN(date.getTime()) ? ts : date.toLocaleString();
   };
 
-  // Group threats by classification
+  // Count threat occurrences for pie chart
   const threatCounts = logs.reduce((acc, log) => {
-    if (log.classification && log.classification !== "Normal") {
-      acc[log.classification] = (acc[log.classification] || 0) + 1;
+    const type = log.anomaly_type;
+    if (threatClassifications.includes(type)) {
+      acc[type] = (acc[type] || 0) + 1;
     }
     return acc;
   }, {});
 
-  const labels = Object.keys(threatCounts);
-  const dataValues = Object.values(threatCounts);
-
   const pieData = {
-    labels,
+    labels: Object.keys(threatCounts),
     datasets: [
       {
-        data: dataValues,
+        data: Object.values(threatCounts),
         backgroundColor: [
-          '#ff4d4d',    // Memory Error - red
-          '#ff9933',    // Authentication Error - orange
-          '#ffcc00',    // File System Error - yellow
-          '#3399ff',    // Network Error - blue
-          '#cc33ff',    // Permission Error - purple
-          '#00cc7d',    // Other - green
+          "#ff0066", // system_critical
+          "#ff9933", // authentication_error
+          "#ffcc00", // File System Error
+          "#3399ff", // Network Error
+          "#cc33ff", // Permission Error
+          "#ff4d4d", // Memory Error
         ],
         hoverBackgroundColor: [
-          '#ff6666',
-          '#ffad5c',
-          '#ffdb4d',
-          '#66b3ff',
-          '#d580ff',
-          '#33d38a',
+          "#ff3385",
+          "#ffad5c",
+          "#ffdb4d",
+          "#66b3ff",
+          "#d580ff",
+          "#ff6666",
         ],
       },
     ],
   };
 
-  const clearHistory = () => {
-    toast.success("History cleared successfully!");
+  const clearLogs = () => {
     setLogs([]);
+    toast.success("Logs cleared!", {
+      position: "bottom-left",
+      theme: "dark",
+    });
   };
 
   return (
-    <div className="min-h-screen bg-[#1a1f2c]">
+    <div className="min-h-screen bg-[#1a1f2c] text-gray-100">
       <ToastContainer />
       <Navbar />
+
       <main className="p-4 sm:p-6 lg:p-8">
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          {/* Recent Logs */}
-          <div className="p-3 sm:p-4 border border-gray-700 rounded bg-[#2c3e50] shadow-lg">
-            <div className="flex justify-between items-center mb-3">
-              <h2 className="text-lg sm:text-xl text-[#00ff9d]">Recent Threats</h2>
-            </div>
+          {/* Threat Logs Section */}
+          <section className="p-4 border border-gray-700 rounded bg-[#2c3e50] shadow-lg">
+            <h2 className="text-lg sm:text-xl text-[#00ff9d] mb-4">Recent Threats</h2>
             {loading ? (
               <p className="text-gray-400">Loading...</p>
-            ) : logs.length > 0 ? (
-              <ul className="space-y-2 max-h-[300px]  sm:max-h-[350px] overflow-auto">
+            ) : logs.filter(log => threatClassifications.includes(log.anomaly_type)).length === 0 ? (
+              <p className="text-gray-400">No recent threats to display.</p>
+            ) : (
+              <ul className="space-y-2 max-h-[300px] overflow-auto">
                 {logs
-                  .filter((log) => threatClassifications.includes(log.classification)) // Only threats
-                  .slice(0, 5) // Show only first 5 threat logs
-                  .map((log, index) => (
+                  .filter(log_ => threatClassifications.includes(log_.anomaly_type))
+                  .slice(0, 5)
+                  .map((log_, idx) => (
                     <li
-                      key={index}
-                      className="p-2 bg-red-900/20 text-red-100 rounded border border-red-600"
+                      key={idx}
+                      className="p-3 rounded border border-red-600 bg-red-900/20 text-red-100"
                     >
-                      <p className="text-xs sm:text-sm text-gray-300">{log.log}</p>
-                      <div className="flex justify-between items-center mt-1">
+                      <p className="text-sm">{log_.log?.content ?? "No message available"}</p>
+
+                      <div className="flex justify-between items-center mt-2 text-xs">
                         <div>
-                          <p className="text-xs italic text-gray-400">
-                            Classification: {log.classification || "Normal"}
+                          <p className="italic text-gray-300">
+                            Type: <span className="font-medium">{log_.anomaly_type}</span>
                           </p>
-                          <span className="text-[10px] sm:text-xs text-gray-500">
-                            {formatTimestamp(log.timestamp)}
-                          </span>
+                          <p className="text-gray-500">
+                            {formatTimestamp(log_.timestamp)}
+                          </p>
                         </div>
-                        <button className="text-[10px] sm:text-xs text-blue-500 hover:underline">
-                          Solution
-                        </button>
+                        <button className="text-blue-400 hover:underline">Solution</button>
                       </div>
                     </li>
                   ))}
               </ul>
-
-            ) : (
-              <p className="text-gray-400">No recent logs to display</p>
             )}
-          </div>
+          </section>
 
-          {/* Pie Chart for Threat Types */}
-          <div className="p-3 sm:p-4 border border-gray-700 rounded bg-[#2c3e50] shadow-lg">
-            <h2 className="text-lg sm:text-xl mb-3 text-[#00ff9d]">Threat Types Distribution</h2>
+          {/* Pie Chart Section */}
+          <section className="p-4 border border-gray-700 rounded bg-[#2c3e50] shadow-lg">
+            <h2 className="text-lg sm:text-xl mb-4 text-[#00ff9d]">Threat Types Distribution</h2>
             {loading ? (
               <p className="text-gray-400">Loading...</p>
-            ) : labels.length > 0 ? (
-              <div className="w-full flex justify-center items-center" style={{ height: '280px' }}>
+            ) : Object.keys(threatCounts).length === 0 ? (
+              <p className="text-gray-400">No threats detected.</p>
+            ) : (
+              <div className="w-full h-[280px] flex justify-center items-center">
                 <Pie
                   data={pieData}
                   options={{
@@ -164,35 +170,33 @@ export default function Home() {
                     responsive: true,
                     plugins: {
                       legend: {
-                        position: 'right',
+                        position: "right",
                         labels: {
                           boxWidth: 12,
-                          padding: 10,
                           font: {
-                            size: window.innerWidth < 768 ? 10 : 12
-                          }
-                        }
-                      }
-                    }
+                            size: window.innerWidth < 768 ? 10 : 12,
+                          },
+                        },
+                      },
+                    },
                   }}
                 />
               </div>
-            ) : (
-              <p className="text-gray-400">No threats detected</p>
             )}
-          </div>
+          </section>
         </div>
 
-        <div className="flex justify-between items-center mt-4 sm:mt-6">
+        {/* Buttons */}
+        <div className="flex justify-between items-center mt-6">
           <button
-            onClick={clearHistory}
-            className="px-3 sm:px-4 py-1.5 sm:py-2 bg-red-600 hover:bg-red-700 text-white rounded-md transition-colors duration-200 flex items-center gap-2 text-xs sm:text-sm"
+            onClick={clearLogs}
+            className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded text-sm sm:text-base"
           >
             Clear History
           </button>
           <button
-            onClick={clearHistory}
-            className="px-3 sm:px-4 py-1.5 sm:py-2 bg-red-600 hover:bg-red-700 text-white rounded-md transition-colors duration-200 flex items-center gap-2 text-xs sm:text-sm"
+            onClick={clearLogs}
+            className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded text-sm sm:text-base"
           >
             Delete Logs
           </button>

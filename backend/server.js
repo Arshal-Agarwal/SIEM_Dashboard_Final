@@ -25,83 +25,78 @@ app.use(bodyParser.json());
 
 // MongoDB Connection
 mongoose.connect('mongodb://localhost:27017/siem_logs')
-  .then(() => {
-    console.log('✅ Connected to MongoDB');
-  })
-  .catch((err) => {
-    console.error('❌ MongoDB connection error:', err);
-  });
+  .then(() => console.log('✅ Connected to MongoDB'))
+  .catch(err => console.error('❌ MongoDB connection error:', err));
 
-// Allowed classifications
-const allowedClasses = [
-  'Normal',
-  'Memory Error',
-  'Authentication Error',
-  'File System Error',
-  'Network Error',
-  'Permission Error'
-];
-
-// Mongoose Schema and Model
+// Schema
 const logSchema = new mongoose.Schema({
-  log: String,
-  classification: {
-    type: String,
-    enum: allowedClasses,
-    required: true
+  log: {
+    content: String,
+    event_template: String,
+    level: String,
+    component: String,
+    line_id: String
   },
-  timestamp: { type: Date, default: Date.now }
+  anomaly_type: String,
+  severity: String,
+  confidence: Number,
+  anomaly_score: Number,
+  processing_mode: String,
+  timestamp: String // Stored as HH:MM:SS string
 });
+
 const Log = mongoose.model('Log', logSchema);
 
-// WebSocket connection
+// WebSocket
 io.on('connection', (socket) => {
   console.log('🔌 Frontend connected:', socket.id);
-
   socket.on('disconnect', () => {
     console.log('❌ Frontend disconnected:', socket.id);
   });
 });
 
-// GET endpoint to fetch logs
+// GET logs
 app.get('/api/logs', async (req, res) => {
-  const { classification } = req.query;
-
   try {
-    const filter = classification ? { classification } : {};
-    const logs = await Log.find(filter).sort({ timestamp: -1 }).limit(100);
+    const logs = await Log.find().sort({ _id: -1 }).limit(100);
     res.json(logs);
   } catch (err) {
     console.error('❌ Error fetching logs:', err);
-    res.status(500).send('Failed to fetch logs from database');
+    res.status(500).send('Failed to fetch logs');
   }
 });
 
-// POST endpoint to receive logs
+// POST logs (accepting array from Python or other services)
 app.post('/api/logs', async (req, res) => {
-  const { log, classification } = req.body;
+  const logArray = req.body;
 
-  if (!allowedClasses.includes(classification)) {
-    return res.status(400).send('❌ Invalid classification type');
+  if (!Array.isArray(logArray)) {
+    return res.status(400).send('❌ Request must be an array of logs');
   }
-
-  console.log('📥 Received log:', log, '| Classification:', classification);
 
   try {
-    const newLog = new Log({ log, classification });
-    await newLog.save();
-    console.log('💾 Log saved to DB');
+    const logsToInsert = logArray.map(entry => ({
+      log: entry.log,
+      anomaly_type: entry.anomaly_type,
+      severity: entry.severity,
+      confidence: entry.confidence,
+      anomaly_score: entry.anomaly_score,
+      processing_mode: entry.processing_mode,
+      timestamp: entry.timestamp || new Date().toISOString().slice(11, 19) // fallback: HH:MM:SS
+    }));
 
-    io.emit('new_log', newLog);
+    const savedLogs = await Log.insertMany(logsToInsert);
+    savedLogs.forEach(log => io.emit('new_log', log));
+    console.log(`💾 Saved ${savedLogs.length} logs`);
 
-    res.status(200).send('Log received and broadcasted');
+    res.status(200).send('Logs received and broadcasted');
   } catch (err) {
-    console.error('❌ Error saving log:', err);
-    res.status(500).send('Failed to save log to database');
+    console.error('❌ Error saving logs:', err);
+    res.status(500).send('Failed to save logs');
   }
 });
 
-// GET endpoint for System Health
+// System Health Endpoint
 app.get('/api/system-health', async (req, res) => {
   const diskPath = os.platform() === 'win32' ? 'C:\\' : '/';
 
@@ -114,9 +109,7 @@ app.get('/api/system-health', async (req, res) => {
       const disk = await checkDiskSpace(diskPath);
 
       const data = {
-        cpu: {
-          usage: +(cpuPercent * 100).toFixed(2)
-        },
+        cpu: { usage: +(cpuPercent * 100).toFixed(2) },
         memory: {
           total: memoryTotal,
           free: memoryFree,
@@ -146,7 +139,7 @@ app.get('/api/system-health', async (req, res) => {
   });
 });
 
-// Start server
+// Start Server
 server.listen(5000, () => {
-  console.log('🚀 Express backend running on http://localhost:5000');
+  console.log('🚀 Server running at http://localhost:5000');
 });
